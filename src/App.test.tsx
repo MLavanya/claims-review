@@ -22,7 +22,7 @@ vi.mock('./api/client', () => ({
   getClaim: api.getClaim,
   replay: api.replay,
   decide: api.decide,
-  eventStream: (_claimId: string, onEvent: (event: RunEvent) => void, onError: () => void) => {
+  eventStream: (_claimId: string, _runId: string, _scenario: ReplayScenario, onEvent: (event: RunEvent) => void, onError: () => void) => {
     const connection = { onEvent, onError, close: vi.fn() };
     api.connections.push(connection);
     return connection as unknown as EventSource;
@@ -48,6 +48,24 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe('App run connection lifecycle', () => {
+  it('moves a previously reviewed claim and queue row to running immediately on replay', async () => {
+    const reviewedClaim = { ...claim, status: 'reviewed' as const };
+    api.getClaims.mockResolvedValue([reviewedClaim]);
+    api.getClaim.mockResolvedValue(snapshot('hydrated', 'reviewed'));
+    render(<App />);
+    await screen.findByRole('button', { name: 'Replay normal run' });
+    expect(document.querySelectorAll('.badge.reviewed')).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Replay normal run' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Replay' }));
+    await waitFor(() => expect(api.connections).toHaveLength(1));
+    expect(document.querySelectorAll('.badge.running')).toHaveLength(2);
+    expect(document.querySelectorAll('.badge.reviewed')).toHaveLength(0);
+
+    api.connections[0]!.onEvent({ type: 'run_finished', claimId: claim.id, runId: 'normal-replacement', sequence: 1, timestamp: '2026-09-23T09:01:00Z' });
+    await waitFor(() => expect(document.querySelectorAll('.badge.needs_review')).toHaveLength(2));
+  });
+
   it('ignores terminal and error callbacks from a replaced EventSource', async () => {
     render(<App />);
     await screen.findByRole('button', { name: 'Replay normal run' });

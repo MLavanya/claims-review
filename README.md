@@ -27,7 +27,7 @@ npm run build
 
 `vercel.json` sends every `/api/...` path to one Vercel Function that runs the existing Express app. The same file keeps non-API page refreshes on the Vite application and gives the SSE fixture enough time to finish streaming.
 
-The backend state is intentionally in memory. A warm function instance supports the complete demo flow, but a cold start or Vercel scaling to another instance can reset runs and reviewer decisions to the fixtures. Durable cross-instance state would require shared storage and is deliberately outside this take-home.
+The deployed demo does not rely on mutable server memory. Replay creates a run ID, the SSE request deterministically streams that run, and reviewer actions are validated and stamped by the backend using the current run/field context. The browser session keeps the active snapshots that drive both queue and review. Refreshing the page resets the demo to its deterministic fixtures; durable cross-session state would require shared storage and is deliberately outside this take-home.
 
 ## Replay the agent
 
@@ -44,11 +44,11 @@ Replay resets only the selected claim's simulated run and reviewer decisions. Th
 
 [`src/domain/runReducer.ts`](src/domain/runReducer.ts) applies agent events exhaustively. It does not own reviewer decisions. Fields retain a current model value, source, confidence, monotonically increasing version, and lightweight revision/confidence history. Citations are `{ documentId, start, end }`; fixture offsets are derived from known evidence text in [`src/fixtures/documents.ts`](src/fixtures/documents.ts), which throws if that evidence is absent.
 
-Reviewer decisions are an append-only in-memory array in [`server/store.ts`](server/store.ts). Each records the server timestamp and `reviewedAgentVersion`. The UI combines the latest field and latest decision only for presentation. When `field.version > decision.reviewedAgentVersion`, it shows that the agent changed the field after the human acted; neither source is overwritten.
+Reviewer decisions remain separate from agent output and append-only within the browser demo session. Each decision is submitted to the backend for validation and receives a server-generated ID, timestamp, and `reviewedAgentVersion`. When `field.version > decision.reviewedAgentVersion`, the UI shows that the agent changed the field after the human acted; neither source is overwritten.
 
 Claim-status semantics are an exercise assumption: a live run remains `running`. After `run_finished`, it becomes `reviewed` only if every latest field version has a current decision; otherwise it becomes `needs_review`. A stale decision requires renewed review. `run_failed` always remains `failed`, while partial findings remain visible.
 
-The browser hydrates a server snapshot, then applies later SSE events. The server applies those same events to its authoritative in-memory state. Event sequence IDs provide only a minimal duplicate safeguard, not durable replay or event sourcing.
+The browser hydrates deterministic fixture snapshots and then owns one coherent active-session snapshot per claim. Both queue and detail derive from that same snapshot. Each SSE request generates its named run independently, so replay, streaming, and decisions do not depend on separate Vercel requests reaching the same function instance. Event sequence IDs and run IDs reject stale or duplicate updates; this remains a demo, not durable event sourcing.
 
 ## Design decisions
 
@@ -62,7 +62,7 @@ Before trusting the screen, I would watch a real reviewer respond when the agent
 
 Codex generated the initial plan and implementation under the supplied project rules. The candidate reviewed and approved the stack and architecture, then directed the following real rework:
 
-- The plan needed a sharper state boundary. Reviewer decisions remain backend-persisted state; the run reducer now processes agent events only. Field versions and `reviewedAgentVersion` provide the simple collision test.
+- The plan needed a sharper state boundary. The run reducer processes agent events only, while reviewer decisions stay separate and carry `reviewedAgentVersion` for collision detection. For Vercel, the later deployment pass made this state browser-session scoped and backend-validated so it does not depend on one permanent server process.
 - Manual testing found that intentional SSE completion was incorrectly shown as a transport interruption. Terminal-event handling was corrected so successful and simulated-failure closes do not show a contradictory connection error.
 - Manual testing found that the initial responsive CSS was inadequate at phone width. The queue, detail cards, evidence, and controls were reworked to stack and wrap without page-level horizontal overflow.
 
@@ -74,7 +74,7 @@ The React/Vite frontend, Express/SSE backend, plain CSS, and focused Vitest/Supe
 
 Future requirement: “A reviewer can accept every field above a chosen confidence threshold across all claims in their queue, in one action.” This is deliberately not implemented.
 
-It would extend the server store with one validated bulk operation and add an API route; it should reuse stable field IDs, field versions, explicit decisions, and the existing reviewed-status calculation. A focused UI control could submit the threshold, but browser state must not decide which fields are accepted.
+It would add one validated bulk API operation backed by durable shared storage; it should reuse stable field IDs, field versions, explicit decisions, and the existing reviewed-status calculation. A focused UI control could submit the threshold, but browser state must not decide which fields are accepted in production.
 
 The likely mistake for an engineer using an AI agent is to iterate over visible frontend fields and write `effectiveValue = reviewerValue || agentValue`. That can accept stale versions, overwrite corrections/overrides, treat confidence as proof, and mishandle a revision during processing. The endpoint would need server-side selection, an expected field version, idempotency, existing-decision protection, and a per-claim result for partial success. Current separate state, stable identifiers, versioned decisions, append-only history, and collision tests reduce those risks without pre-building the feature.
 
@@ -88,9 +88,11 @@ I would clarify the business semantics of **correct** versus **override** with p
 
 ## What next, and what you left out
 
-A production version needs durable storage and audit retention, authentication and authorization, idempotent/concurrency-safe writes, real agent integration, stream reconnection and resume semantics, stronger schema validation, observability, data protection controls, broader end-to-end testing, and usability/accessibility testing with real claims reviewers.
+A useful next product pass would make a larger queue easier to work with. I would add more filters, such as priority and confidence, and place claim search beside the existing status filter. I would also require a short reason when a reviewer corrects or overrides an agent value. That reason would make manual changes clearer to another reviewer and more useful in the audit history.
 
-Deliberately omitted for this timeboxed exercise: a database, authentication, real AI calls, PDF rendering, production event infrastructure, WebSockets, global state management, a design system, and exhaustive tests. In-memory state disappears when the server restarts or a serverless instance is replaced.
+A production version also needs durable storage and audit retention, authentication and authorization, idempotent/concurrency-safe writes, real agent integration, stream reconnection and resume semantics, stronger schema validation, observability, data protection controls, broader end-to-end testing, and usability/accessibility testing with real claims reviewers.
+
+Deliberately omitted for this timeboxed exercise: additional queue filters, claim search, mandatory reasons for manual decisions, a database, authentication, real AI calls, PDF rendering, production event infrastructure, WebSockets, global state management, a design system, and exhaustive tests. Active demo state resets to fixtures on a browser refresh.
 
 ## Time spent
 

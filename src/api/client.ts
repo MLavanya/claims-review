@@ -1,4 +1,4 @@
-import type { Claim, ClaimSnapshot, DecisionAction, ReplayScenario, ReviewerDecision, RunEvent } from '../domain/types';
+import type { AgentRun, Claim, ClaimSnapshot, DecisionAction, ExtractedField, ReplayScenario, ReviewerDecision, RunEvent } from '../domain/types';
 
 async function json<T>(response: Response): Promise<T> {
   const body = await response.json() as T & { error?: string };
@@ -12,9 +12,15 @@ export async function getClaims(status?: string): Promise<Claim[]> {
 }
 export const getClaim = async (id: string) => json<ClaimSnapshot>(await fetch(`/api/claims/${id}`));
 export const replay = async (id: string, scenario: ReplayScenario) => json<ClaimSnapshot>(await fetch(`/api/claims/${id}/replay`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scenario }) }));
-export const decide = async (id: string, fieldId: string, action: DecisionAction, value?: string) => json<{ decision: ReviewerDecision; claim: Claim }>(await fetch(`/api/claims/${id}/decisions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fieldId, action, value }) }));
-export function eventStream(id: string, onEvent: (event: RunEvent) => void, onError: () => void): EventSource {
-  const source = new EventSource(`/api/claims/${id}/events`);
+export const decide = async (id: string, fieldId: string, action: DecisionAction, value: string | undefined, field: ExtractedField, run: AgentRun, decisions: ReviewerDecision[]) =>
+  json<{ decision: ReviewerDecision; claim: Claim }>(await fetch(`/api/claims/${id}/decisions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fieldId, action, value, field, run, decisions }),
+  }));
+export function eventStream(id: string, runId: string, scenario: ReplayScenario, onEvent: (event: RunEvent) => void, onError: () => void): EventSource {
+  const query = new URLSearchParams({ runId, scenario });
+  const source = new EventSource(`/api/claims/${id}/events?${query}`);
   source.addEventListener('run_event', (message) => onEvent(JSON.parse(message.data) as RunEvent));
   source.onerror = () => { if (source.readyState !== EventSource.CLOSED) onError(); };
   return source;

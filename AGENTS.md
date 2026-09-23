@@ -9,7 +9,7 @@ Build the MarvelX Product Engineer take-home as a small, maintainable React + Ty
 1. Agent output and reviewer decisions are separate data.
 2. Never silently overwrite a reviewer decision when the agent later revises a field.
 3. Preserve provenance: the UI must make clear whether a change came from the agent or the reviewer.
-4. Backend/server state is authoritative for persisted reviewer decisions.
+4. Reviewer decisions must be validated and stamped by the backend; the serverless demo keeps the active snapshot in the browser session rather than relying on cross-request server memory.
 5. Partial agent failure must preserve useful results already produced.
 6. Evidence/citations should be more important than confidence alone.
 7. Reviewer actions must work while the agent is still running.
@@ -38,4 +38,3 @@ Before making a large change: inspect the current implementation, explain what n
 When a product requirement is unclear, state the assumption, choose the simplest reasonable behaviour, and record important assumptions for the README.
 
 Never invent work, decisions, AI interactions, or test results that did not happen.
-

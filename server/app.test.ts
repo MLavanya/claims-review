@@ -1,83 +1,73 @@
 import request from 'supertest';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { applyRunEvent, createEmptyRun } from '../src/domain/runReducer.js';
+import type { AgentRun, ReviewerDecision, RunEvent } from '../src/domain/types.js';
 import { makeRunEvents } from '../src/fixtures/runEvents.js';
 import { createApp } from './app.js';
-import { MemoryStore } from './store.js';
 
-let store: MemoryStore;
-let app: ReturnType<typeof createApp>['app'];
-beforeEach(() => { store = new MemoryStore(); app = createApp(store).app; });
-afterEach(() => store.dispose());
+const newApp = () => createApp({ eventDelay: 1 }).app;
+const runFrom = (events: RunEvent[]): AgentRun => events.reduce(applyRunEvent, createEmptyRun('c-1042', events[0]?.runId));
+const decisionBody = (run: AgentRun, decisions: ReviewerDecision[], fieldId: string, action = 'accept', value?: string) => ({ fieldId, action, value, field: run.fields[fieldId], run, decisions });
 
-describe('claims API', () => {
-  it('filters claims and rejects an invalid status', async () => {
-    const filtered = await request(app).get('/api/claims?status=reviewed').expect(200);
-    expect(filtered.body.claims).toHaveLength(1);
-    const invalid = await request(app).get('/api/claims?status=banana').expect(400);
-    expect(invalid.body.error).toMatch(/Invalid status/);
+describe('stateless claims API', () => {
+  it('filters claims, hydrates a fixture, and validates errors', async () => {
+    expect((await request(newApp()).get('/api/claims?status=reviewed').expect(200)).body.claims).toHaveLength(1);
+    await request(newApp()).get('/api/claims?status=banana').expect(400);
+    const detail = await request(newApp()).get('/api/claims/c-1042').expect(200);
+    expect(detail.body).toMatchObject({ claim: { id: 'c-1042', status: 'needs_review' }, run: { status: 'finished' }, decisions: [] });
+    expect(detail.body.documents).not.toHaveLength(0);
+    await request(newApp()).get('/api/claims/missing').expect(404);
   });
 
-  it('validates and persists a reviewer decision against the current field version', async () => {
-    for (const event of makeRunEvents('c-1042', 'test-run', 'normal').slice(0, 3)) store.applyEvent(event);
-    await request(app).post('/api/claims/c-1042/decisions').send({ fieldId: 'incident_date', action: 'correct' }).expect(400);
-    const response = await request(app).post('/api/claims/c-1042/decisions').send({ fieldId: 'incident_date', action: 'correct', value: '12 September 2026' }).expect(201);
-    expect(response.body.decision).toMatchObject({ value: '12 September 2026', reviewedAgentVersion: 1 });
-    expect(store.snapshot('c-1042')?.decisions).toHaveLength(1);
+  it('starts every replay as a fresh running snapshot without shared memory', async () => {
+    const reviewedFixture = await request(newApp()).get('/api/claims/c-1038').expect(200);
+    expect(reviewedFixture.body.claim.status).toBe('reviewed');
+    const first = await request(newApp()).post('/api/claims/c-1038/replay').send({ scenario: 'normal' }).expect(200);
+    const second = await request(newApp()).post('/api/claims/c-1038/replay').send({ scenario: 'normal' }).expect(200);
+    expect(first.body.claim.status).toBe('running');
+    expect(first.body.run.status).toBe('running');
+    expect(first.body.decisions).toEqual([]);
+    expect(second.body.run.runId).not.toBe(first.body.run.runId);
   });
 
-  it('keeps running status until completion and then derives review status', async () => {
-    const events = makeRunEvents('c-1042', 'test-run', 'normal');
-    events.slice(0, 3).forEach((event) => store.applyEvent(event));
-    await request(app).post('/api/claims/c-1042/decisions').send({ fieldId: 'incident_date', action: 'accept' }).expect(201);
-    expect(store.snapshot('c-1042')?.claim.status).not.toBe('reviewed');
-    events.slice(3).forEach((event) => store.applyEvent(event));
-    expect(store.snapshot('c-1042')?.claim.status).toBe('needs_review');
+  it('streams a requested run independently of the replay instance', async () => {
+    const replay = await request(newApp()).post('/api/claims/c-1042/replay').send({ scenario: 'normal' }).expect(200);
+    const stream = await request(newApp()).get(`/api/claims/c-1042/events?runId=${replay.body.run.runId}&scenario=normal`).expect('Content-Type', /text\/event-stream/).expect(200);
+    expect(stream.text).toContain(`"runId":"${replay.body.run.runId}"`);
+    expect(stream.text).toContain('"type":"run_finished"');
+    expect(stream.text).toContain('"type":"field_revised"');
   });
 
-  it('becomes reviewed only when every finished field has a current decision', async () => {
-    makeRunEvents('c-1042', 'test-run', 'normal').forEach((event) => store.applyEvent(event));
+  it('derives reviewed only after every current field is decided across independent requests', async () => {
+    const run = runFrom(makeRunEvents('c-1042', 'finished-run', 'normal'));
+    let decisions: ReviewerDecision[] = [];
     for (const fieldId of ['incident_date', 'damage_amount', 'coverage']) {
-      await request(app).post('/api/claims/c-1042/decisions').send({ fieldId, action: 'accept' }).expect(201);
+      const result = await request(newApp()).post('/api/claims/c-1042/decisions').send(decisionBody(run, decisions, fieldId)).expect(201);
+      decisions = [...decisions, result.body.decision];
+      expect(result.body.claim.status).toBe(fieldId === 'coverage' ? 'reviewed' : 'needs_review');
     }
-    expect(store.snapshot('c-1042')?.claim.status).toBe('reviewed');
+    expect(decisions).toHaveLength(3);
   });
 
-  it('preserves repeated decisions and treats the last one as current', async () => {
-    makeRunEvents('c-1042', 'test-run', 'normal').forEach((event) => store.applyEvent(event));
-    for (const payload of [
-      { fieldId: 'damage_amount', action: 'correct', value: '€4,500' },
-      { fieldId: 'damage_amount', action: 'override', value: '€4,400' },
-      { fieldId: 'damage_amount', action: 'accept' },
-    ]) await request(app).post('/api/claims/c-1042/decisions').send(payload).expect(201);
-    const decisions = store.snapshot('c-1042')!.decisions;
-    expect(decisions.map(({ action, value }) => ({ action, value }))).toEqual([
-      { action: 'correct', value: '€4,500' },
-      { action: 'override', value: '€4,400' },
-      { action: 'accept', value: '€4,520' },
-    ]);
+  it('keeps a running decision separate from a later AI revision', async () => {
+    const events = makeRunEvents('c-1042', 'collision-run', 'normal');
+    const partialRun = runFrom(events.slice(0, 7));
+    const response = await request(newApp()).post('/api/claims/c-1042/decisions').send(decisionBody(partialRun, [], 'damage_amount', 'correct', '€4,400')).expect(201);
+    expect(response.body.claim.status).toBe('running');
+    expect(response.body.decision).toMatchObject({ value: '€4,400', reviewedAgentVersion: 1 });
+    const finishedRun = events.slice(7).reduce(applyRunEvent, partialRun);
+    expect(finishedRun.fields.damage_amount).toMatchObject({ value: '€4,520', version: 2 });
+    expect(response.body.decision).toMatchObject({ value: '€4,400', reviewedAgentVersion: 1 });
   });
 
-  it('can restart a failed fixture repeatedly from failed state', () => {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const snapshot = store.replay('c-1042', 'failed', 100_000);
-      expect(snapshot?.claim.status).toBe('running');
-      expect(snapshot?.run.fields).toEqual({});
-      const runId = snapshot!.run.runId;
-      makeRunEvents('c-1042', runId, 'failed').forEach((event) => store.applyEvent(event));
-      const failed = store.snapshot('c-1042')!;
-      expect(failed.claim.status).toBe('failed');
-      expect(failed.run.status).toBe('failed');
-      expect(Object.keys(failed.run.fields)).toHaveLength(2);
-    }
-
-    const normal = store.replay('c-1042', 'normal', 100_000)!;
-    expect(normal.claim.status).toBe('running');
-    makeRunEvents('c-1042', normal.run.runId, 'normal').forEach((event) => store.applyEvent(event));
-    expect(store.snapshot('c-1042')?.run.status).toBe('finished');
-    expect(store.snapshot('c-1042')?.claim.status).toBe('needs_review');
-
-    const failedAgain = store.replay('c-1042', 'failed', 100_000)!;
-    makeRunEvents('c-1042', failedAgain.run.runId, 'failed').forEach((event) => store.applyEvent(event));
-    expect(store.snapshot('c-1042')?.claim.status).toBe('failed');
+  it('streams failed partial work and validates stateless decision context', async () => {
+    const replay = await request(newApp()).post('/api/claims/c-1042/replay').send({ scenario: 'failed' }).expect(200);
+    const stream = await request(newApp()).get(`/api/claims/c-1042/events?runId=${replay.body.run.runId}&scenario=failed`).expect(200);
+    const events = stream.text.split('\n').filter((line) => line.startsWith('data: ')).map((line) => JSON.parse(line.slice(6)) as RunEvent);
+    const run = runFrom(events);
+    expect(run.status).toBe('failed');
+    expect(Object.keys(run.fields)).toHaveLength(2);
+    await request(newApp()).post('/api/claims/c-1042/decisions').send({ fieldId: 'incident_date', action: 'accept' }).expect(400);
+    await request(newApp()).get('/api/claims/c-1042/events').expect(400);
   });
 });
