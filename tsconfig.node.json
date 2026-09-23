@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["server", "src/domain", "src/fixtures", "vite.config.ts"]
+  "include": ["api", "server", "src/domain", "src/fixtures", "vite.config.ts"]
 }
