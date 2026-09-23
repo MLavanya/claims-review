@@ -86,7 +86,17 @@ A production version needs durable storage and audit retention, authentication a
 
 Deliberately omitted for this timeboxed exercise: a database, authentication, real AI calls, PDF rendering, production event infrastructure, WebSockets, global state management, a design system, deployment setup, and exhaustive tests. In-memory state disappears when the server restarts.
 
-Implementation and verification took approximately one hour of active Codex-assisted work following the planning exchange. This is recorded as elapsed working time, not presented as a manual-only estimate.
+## Time spent
+
+I spent roughly 4 hours on the exercise.
+
+I first spent some time understanding the requirements and deciding how I wanted the reviewer and AI agent interaction to work. One thing I wanted to handle properly was what happens when the reviewer already makes a decision and the AI changes its answer later.
+
+Most of the time went into building the actual flow - the claims queue, live agent updates, extracted fields, confidence and evidence, and the Accept, Correct and Override actions.
+
+I also spent time testing the normal and failed runs, checking the mobile layout, and fixing issues I found while testing.
+
+I kept the backend and agent simulation simple on purpose. For this exercise I felt it was more important to show the complete reviewer flow than to add things like a real database, authentication or a real AI integration.
 
 ## API summary
 
