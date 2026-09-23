@@ -23,6 +23,12 @@ npm run typecheck
 npm run build
 ```
 
+## Deploy to Vercel
+
+`vercel.json` sends every `/api/...` path to one Vercel Function that runs the existing Express app. The same file keeps non-API page refreshes on the Vite application and gives the SSE fixture enough time to finish streaming.
+
+The backend state is intentionally in memory. A warm function instance supports the complete demo flow, but a cold start or Vercel scaling to another instance can reset runs and reviewer decisions to the fixtures. Durable cross-instance state would require shared storage and is deliberately outside this take-home.
+
 ## Replay the agent
 
 Select `CLM-1042`, then use the controls at the top of the review:
@@ -84,7 +90,7 @@ I would clarify the business semantics of **correct** versus **override** with p
 
 A production version needs durable storage and audit retention, authentication and authorization, idempotent/concurrency-safe writes, real agent integration, stream reconnection and resume semantics, stronger schema validation, observability, data protection controls, broader end-to-end testing, and usability/accessibility testing with real claims reviewers.
 
-Deliberately omitted for this timeboxed exercise: a database, authentication, real AI calls, PDF rendering, production event infrastructure, WebSockets, global state management, a design system, deployment setup, and exhaustive tests. In-memory state disappears when the server restarts.
+Deliberately omitted for this timeboxed exercise: a database, authentication, real AI calls, PDF rendering, production event infrastructure, WebSockets, global state management, a design system, and exhaustive tests. In-memory state disappears when the server restarts or a serverless instance is replaced.
 
 ## Time spent
 

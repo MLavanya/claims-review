@@ -15,8 +15,7 @@ export const replay = async (id: string, scenario: ReplayScenario) => json<Claim
 export const decide = async (id: string, fieldId: string, action: DecisionAction, value?: string) => json<{ decision: ReviewerDecision; claim: Claim }>(await fetch(`/api/claims/${id}/decisions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fieldId, action, value }) }));
 export function eventStream(id: string, onEvent: (event: RunEvent) => void, onError: () => void): EventSource {
   const source = new EventSource(`/api/claims/${id}/events`);
-  source.onmessage = (message) => onEvent(JSON.parse(message.data) as RunEvent);
+  source.addEventListener('run_event', (message) => onEvent(JSON.parse(message.data) as RunEvent));
   source.onerror = () => { if (source.readyState !== EventSource.CLOSED) onError(); };
   return source;
 }
-
