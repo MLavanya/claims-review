@@ -4,6 +4,10 @@ A small MarvelX Product Engineer take-home for a human claims reviewer. A simula
 
 This is an exercise, not production claims software. It has no real AI, database, authentication, or insurer integration.
 
+## Live demo
+
+[https://claims-review-topaz.vercel.app/](https://claims-review-topaz.vercel.app/)
+
 ## Run locally
 
 Requires a current Node.js LTS release and npm.
